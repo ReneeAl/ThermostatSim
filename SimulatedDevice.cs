@@ -10,8 +10,6 @@ using Newtonsoft.Json;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.Devices;
-using System.Net.Http;
-using System.Collections.Generic;
 
 namespace simulatedDevice
 {
@@ -20,176 +18,131 @@ namespace simulatedDevice
         private static DeviceClient s_deviceClient;
 
         // The device connection string to authenticate the device with your IoT hub.
-        private const string s_connectionString = "HostName=Practice-iot.azure-devices.net;DeviceId=thermostat-dev;SharedAccessKey=6HL+302MPnZWjn+XQ6YM+isuOLVaQDBues6qLydH2jg=";
+        private const string s_connectionString = "HostName=Practice-iot.azure-devices.net;DeviceId=iotdev1;SharedAccessKey=T5ulhSt+S8nvL9dAHbjIdClDYvMhtUrrKXnq/IvPVoM=";
         private const string s_serviceConnectionString = "HostName=Practice-iot.azure-devices.net;SharedAccessKeyName=service;SharedAccessKey=dc30cfudaho6rMgMaEiHVcsv73Z0cx4O+9QxG7oXKBg=";
-        private static Boolean ACOn = false;
-        private static Boolean heaterOn = false;
-        static double maxTemperature = 80;
-        static double minTemperature = 55;
         private static double currentTemperature;
-        // Async method to send simulated telemetry
-
-        private static void generateThermostatInfo()
-        {
-            Random rand = new Random();
-
-            if (currentTemperature > maxTemperature)
-            {
-                ACOn = true;
-                //SendInfoToAzureFunctionAsync();
-            }
-            else
-            {
-                ACOn = false;
-            }
-
-            if (currentTemperature < minTemperature)
-            {
-                heaterOn = true;
-            }
-            else
-            {
-                heaterOn = false;
-            }
-
-            currentTemperature = minTemperature + rand.NextDouble() * 15;
-
-            while (currentTemperature > maxTemperature || currentTemperature < minTemperature)
-            {
-                rand = new Random();
-                currentTemperature = minTemperature + rand.NextDouble() * 15;
-            }
-        }
-        private static async void SendThermoInfoToIOTHubAsync()
-        {
-            // Initial telemetry values
-
-            // Create JSON message       
-            var telemetryDataPoint = new
-            {
-                temperature = currentTemperature,
-                maxTemperature = maxTemperature,
-                minTemperature = minTemperature,
-                ac_on = ACOn,
-                heater_on = heaterOn
-            };
-
-            var messageString = JsonConvert.SerializeObject(telemetryDataPoint);
-            var message = new Microsoft.Azure.Devices.Client.Message(Encoding.ASCII.GetBytes(messageString));
-            message.ContentType = "application/json";
-            message.ContentEncoding = "utf-8";
-
-
-            // Add a custom application property to the message.
-            // An IoT hub can filter on these properties without access to the message body.
-            message.Properties.Add("temperatureAlert", (currentTemperature > 30) ? "true" : "false");
-
-            // Send the tlemetry message
-            await s_deviceClient.SendEventAsync(message).ConfigureAwait(false);
-            Console.WriteLine("{0} > Sending message: {1}", DateTime.Now, messageString);
-
-            await Task.Delay(1000).ConfigureAwait(false);
-
-        }
-
-        // private async static Task SendInfoToAzureFunctionAsync()
-        // {
-        //     //requires a "temperature"
-        //     HttpClient client = new HttpClient();
-        //     string url = "https://practice-function.azurewebsites.net/api/HttpTrigger1?temperature=";
-            
-        //     //PostAsync requires two values with last beign
-        //     //an encodedContent variable. Can't just have the 
-        //     //info added to the url string. JSon message doesn't work
-        //     //for encodedContent so use Dictionary
-
-        //     // var info = new Dictionary<string, string>
-        //     // {
-        //     //     { "temperature", currentTemperature.ToString() }
-        //     // };
-        //     // var postCommand = new FormUrlEncodedContent(info);
-
-        //     //getAsync only requires the url with search index
-        //     var response = await client.GetAsync(url + currentTemperature);
-        //     string responseString = await response.Content.ReadAsStringAsync();
-            
-        //     Console.WriteLine(responseString);
-        //     System.Threading.Thread.Sleep(20000);
-        // }
-
-        private async static Task SendInfoToUserAsync()
-        {
-            ServiceClient serviceClient = ServiceClient.CreateFromConnectionString(s_serviceConnectionString);
-            string targetDevice = "iotdev1";
-            string message = $"Current temperature: {currentTemperature}, AC status: {ACOn}, heater status: {heaterOn}";
-            Console.WriteLine(message);
-            var commandMessage = new Microsoft.Azure.Devices.Message(Encoding.ASCII.GetBytes(message));
-            await serviceClient.SendAsync(targetDevice, commandMessage);
-        }
-        private static async void ReceiveUserMessageAsync()
-        {
-            //Console.WriteLine("\nReceiving cloud to device messages from service");
+        private static Boolean ACOn;
+        private static Boolean heaterOn;
+        private static double maxTemperature = 80;
+        private static double minTemperature = 55;
+        private static double userTemp;
+        private static async void ReceiveThemostatMessageAsync(){
             bool continueLoop = true;
-            while (true)
-            {
-                Microsoft.Azure.Devices.Client.Message receivedMessage = await s_deviceClient.ReceiveAsync();
-                if (receivedMessage == null)
-                {
+
+            while(continueLoop){
+                Microsoft.Azure.Devices.Client.Message recievedMessage = await s_deviceClient.ReceiveAsync();
+                if(recievedMessage ==null){
                     continue;
-                }
-                else
-                {
+                } else{
                     continueLoop = false;
                 }
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                string message = Encoding.ASCII.GetString(receivedMessage.GetBytes());
-                Console.WriteLine("Received message: {0}", message);
+                string message = Encoding.ASCII.GetString(recievedMessage.GetBytes());
+                setCurrentTemp(message);
 
-
-                setTemperature(message);
-                Console.ResetColor();
-
-                await s_deviceClient.CompleteAsync(receivedMessage);
+                await s_deviceClient.CompleteAsync(recievedMessage);
             }
         }
 
-        private static void setTemperature(string message)
+        private async static void setCurrentTemp(string message){
+            //format "current temp: ##, ac status: t/f, heater status: t/f"
+            string[] lines = message.Split(',');
+            string[] temp = lines[0].Split(' ');
+            currentTemperature = double.Parse(temp[temp.Length-1]);
+
+            string[] ac = lines[1].Split(' ');
+            ACOn = Boolean.Parse(ac[ac.Length-1]);
+            
+            string[] heater = lines[2].Split(' ');
+            heaterOn = Boolean.Parse(heater[ac.Length-1]);
+        }
+        private async static Task SendMaxTempMessageAsync(double userTemp)
         {
-            //format "Set max/minTemp to: ##"
-            string[] temp = message.Split(' ');
-            if (temp[1].Equals("minTemp"))
-            {
-                minTemperature = double.Parse(temp[temp.Length - 1]);
-            }
-            else if (temp[1].Equals("maxTemp"))
-            {
-                maxTemperature = double.Parse(temp[temp.Length - 1]);
-            }
+            ServiceClient serviceClient = ServiceClient.CreateFromConnectionString(s_serviceConnectionString);
+            string targetDevice = "thermostat-dev";
+            var commandMessage = new Microsoft.Azure.Devices.Message(Encoding.ASCII.GetBytes("Set maxTemp to: " +userTemp));
+            await serviceClient.SendAsync(targetDevice, commandMessage);
         }
 
+        private async static Task SendMinTempMessageAsync(double userTemp)
+        {
+            ServiceClient serviceClient = ServiceClient.CreateFromConnectionString(s_serviceConnectionString);
+            string targetDevice = "thermostat-dev";
+            var commandMessage = new Microsoft.Azure.Devices.Message(Encoding.ASCII.GetBytes("Set minTemp to: " +userTemp));
+            await serviceClient.SendAsync(targetDevice, commandMessage);
+        }
+
+        private static void loadMenu(){
+            Console.WriteLine("Welcome User");
+            Console.WriteLine($"Current temperature: {currentTemperature}");
+            Console.WriteLine($"AC status: {ACOn}\nHeater status: {heaterOn}");
+            Console.WriteLine($"Max Temp: {maxTemperature}");
+            Console.WriteLine($"Min Temp: {minTemperature}");
+            Console.WriteLine("Refresh with R | Exit with C\nType max or min to set the temperature");
+        }
         private static void Main()
         {
-            //Console.WriteLine("IoT Hub Quickstarts - Simulated device. Ctrl-C to exit.\n");
-
             // Connect to the IoT hub using the MQTT protocol
             s_deviceClient = DeviceClient.CreateFromConnectionString(s_connectionString, Microsoft.Azure.Devices.Client.TransportType.Mqtt);
+            //bool flag = false;
+            string input;
+            //SendDeviceToCloudMessagesAsync();
+            
+            
+            while(true){
+                //gets the currentTemp and ac status from themostat device
+                //if message is null it will break out of ReceiveMessage while loop and jump back to main
+                //if ReveiveMessage is put in a loop and exeption will be thrown
+                
+                Console.WriteLine("Connecting to themostat");
+                while(currentTemperature == 0){
+                    ReceiveThemostatMessageAsync();
+                }
 
-            currentTemperature = 90;
-            generateThermostatInfo();
+                Console.Clear();
+                loadMenu();
+                input = Console.ReadLine();
+               
+                if(input.Equals("r") || input.Equals("R")){//refresh
+                    Console.Clear();
+                    continue;
+                }else if(input.Equals("c") || input.Equals("C")){//exit
+                    break;
+                }else if(input.Equals("max") || input.Equals("Max")){//max
+                    while(true){ 
+                        Console.WriteLine("Input the max temperature:");
+                        input = Console.ReadLine();
 
-            while (true)
-            {
-                ReceiveUserMessageAsync();
-                generateThermostatInfo();
-                SendInfoToUserAsync();
-                //fix later v
-                SendThermoInfoToIOTHubAsync();
+                        //checks for valid input
+                        if (double.TryParse(input, out userTemp))
+                        {
+                            maxTemperature = userTemp;
+                            SendMaxTempMessageAsync(maxTemperature);
+                            break;
+                        }else{
+                            Console.Clear();
+                            loadMenu();
+                            Console.WriteLine("\n!!Please insert a number!!");
+                        }
+                    }                   
+                }else if(input.Equals("min") || input.Equals("Min")){//min
+                    while(true){ 
+                        Console.WriteLine("Input the min temperature:");
+                        input = Console.ReadLine();
 
-                //1s = 1000
-                System.Threading.Thread.Sleep(20000);
-            }
-
-            Console.ReadLine();
-        }
+                        //checks for valid input
+                        if (double.TryParse(input, out userTemp))
+                        {
+                            minTemperature = userTemp;
+                            SendMinTempMessageAsync(minTemperature);
+                            break;
+                        }else{
+                            Console.Clear();
+                            loadMenu();
+                            Console.WriteLine("\n!!Please insert a number!!");
+                        }
+                    } 
+                }
+            }//while
+        }//main
     }
 }
